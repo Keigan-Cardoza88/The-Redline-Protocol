@@ -119,10 +119,15 @@ class RedlineEnvironment(Environment):
             return self.origin
 
         if self.task_level == "easy":
-            candidate_mask = valid_mask & (distances >= 6) & (distances <= 18) & (toxicities < 0.55)
+            graph_distances = self._compute_road_distances(self.origin)[valid_roads[:, 0], valid_roads[:, 1]].astype(float)
+            reachable_mask = graph_distances > 0
+            easy_target_distance = 90.0
+            candidate_mask = reachable_mask & (graph_distances >= 85) & (graph_distances <= 95) & (toxicities < 0.65)
             if not np.any(candidate_mask):
-                candidate_mask = valid_mask & (distances >= 4) & (distances <= 24)
-            scores = distances + (toxicities * 10.0)
+                candidate_mask = reachable_mask & (graph_distances >= 80) & (graph_distances <= 100) & (toxicities < 0.78)
+            if not np.any(candidate_mask):
+                candidate_mask = reachable_mask & (graph_distances >= 75) & (graph_distances <= 110)
+            scores = (np.abs(graph_distances - easy_target_distance) * 3.0) + (toxicities * 10.0)
         elif self.task_level == "medium":
             candidate_mask = valid_mask & (distances >= 45) & (toxicities < 0.45)
             if not np.any(candidate_mask):

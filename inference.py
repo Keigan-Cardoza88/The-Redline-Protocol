@@ -9,12 +9,11 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from openai import OpenAI
-
 from client import RedlineEnv
 from models import RedlineAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
 API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "deepseek-ai/DeepSeek-V3-0324"
 
@@ -23,8 +22,8 @@ BENCHMARK = os.getenv("REDLINE_ENV_V4_BENCHMARK", "redline")
 REGION = "Panaji"
 DEFAULT_MAX_STEPS = {
     "easy": 100,
-    "medium": 200,
-    "hard": 300,
+    "medium": 150,
+    "hard": 200,
 }
 MAX_STEPS = int(os.getenv("REDLINE_ENV_V4_MAX_STEPS", str(DEFAULT_MAX_STEPS.get(TASK_NAME, 120))))
 
