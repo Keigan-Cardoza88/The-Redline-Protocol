@@ -21,6 +21,8 @@ IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
 API_BASE_URL = os.getenv("API_BASE_URL")
 MODEL_NAME = os.getenv("MODEL_NAME")
 API_KEY = os.getenv("API_KEY")
+HF_TOKEN = os.getenv("HF_TOKEN")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 TASK_NAME = os.getenv("MY_ENV_V4_TASK", "echo")
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "my_env_v4")
@@ -40,6 +42,17 @@ def _safe_int(value: Optional[str], default: int) -> int:
 
 
 MAX_STEPS = _safe_int(os.getenv("REDLINE_ENV_V4_MAX_STEPS"), DEFAULT_MAX_STEPS.get(TASK_NAME, 120))
+
+
+def _resolve_client_config() -> Tuple[Optional[str], Optional[str], str, str]:
+    env_model = os.getenv("MODEL_NAME")
+    if API_BASE_URL and API_KEY:
+        return API_BASE_URL, API_KEY, env_model or "gpt-4.1-mini", "validator"
+    if HF_TOKEN:
+        return "https://router.huggingface.co/v1", HF_TOKEN, env_model or "Qwen/Qwen2.5-7B-Instruct-1M", "hf"
+    if OPENAI_API_KEY:
+        return os.getenv("OPENAI_BASE_URL"), OPENAI_API_KEY, env_model or "gpt-4.1-mini", "openai"
+    return None, None, env_model or "gpt-4.1-mini", "missing"
 
 CARDINAL_DELTAS: Dict[str, Tuple[int, int]] = {
     "N": (0, -1),
@@ -624,6 +637,7 @@ def _run_sync(coro):
 
 
 def main() -> None:
+    global MODEL_NAME
     env: Optional[RedlineEnv] = None
     obs = None
     rewards: List[float] = []
@@ -636,24 +650,26 @@ def main() -> None:
     medium_detour_credit = 2
     initial_distance = 0.0
     error_message: Optional[str] = None
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME or "unknown")
+    client_base_url, client_api_key, client_model_name, client_source = _resolve_client_config()
+    log_start(task=TASK_NAME, env=BENCHMARK, model=client_model_name)
 
-    if not API_BASE_URL or not API_KEY:
+    if not client_api_key:
         print("❌ ENV DEBUG:")
-        print("API_BASE_URL:", API_BASE_URL)
-        print("MODEL_NAME:", MODEL_NAME)
-        print("API_KEY exists:", bool(API_KEY))
-        error_message = "RuntimeError: Missing required environment variables"
+        print("[DEBUG] API_BASE_URL:", API_BASE_URL, flush=True)
+        print("[DEBUG] MODEL_NAME:", MODEL_NAME, flush=True)
+        print("[DEBUG] API_KEY exists:", bool(API_KEY), flush=True)
+        print("[DEBUG] HF_TOKEN exists:", bool(HF_TOKEN), flush=True)
+        print("[DEBUG] OPENAI_API_KEY exists:", bool(OPENAI_API_KEY), flush=True)
+        error_message = "RuntimeError: Missing all supported API credentials"
         log_step(step=0, action="ERROR", reward=0.0, done=True, error=error_message)
         log_end(success=False, steps=0, score=0.0, rewards=[])
         return
 
     try:
+        MODEL_NAME = client_model_name
+        print(f"[DEBUG] client source: {client_source}", flush=True)
         obstacle_mask = load_planner_data()
-        client = OpenAI(
-            base_url=API_BASE_URL,
-            api_key=API_KEY
-        )
+        client = OpenAI(api_key=client_api_key) if client_base_url is None else OpenAI(base_url=client_base_url, api_key=client_api_key)
         env = _run_sync(RedlineEnv.from_docker_image(IMAGE_NAME))
         result = _run_sync(env.reset())
         obs = result.observation
@@ -665,7 +681,7 @@ def main() -> None:
 
             current = obs.current_position
             goal = obs.goal_position
-            sensors = obs.get_actions
+            sensors = obs.get_actions() if callable(obs.get_actions) else obs.get_actions
             recent_positions.append(current)
 
             if step == 1:
