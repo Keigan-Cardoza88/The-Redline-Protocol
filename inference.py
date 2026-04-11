@@ -19,7 +19,7 @@ except ModuleNotFoundError:
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
 API_BASE_URL = os.environ["API_BASE_URL"]
 MODEL_NAME = os.environ["MODEL_NAME"]
-API_KEY = os.environ["API_KEY"]   # MUST use this (NOT HF_TOKEN)
+API_KEY = os.environ["API_KEY"]
 
 TASK_NAME = os.getenv("MY_ENV_V4_TASK", "echo")
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "my_env_v4")

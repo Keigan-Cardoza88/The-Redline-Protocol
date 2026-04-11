@@ -1,4 +1,5 @@
 import html
+import importlib
 import json
 import math
 import os
@@ -10,17 +11,44 @@ import pandas as pd
 from openai import OpenAI
 
 try:
-    import inference as baseline
     from models import RedlineAction
     from server.redline_env_environment import RedlineEnvironment
 except ModuleNotFoundError:
-    from redline_env import inference as baseline
     from redline_env.models import RedlineAction
     from redline_env.server.redline_env_environment import RedlineEnvironment
 
 POLLUTANT_OPTIONS = ["NO2", "PM25", "SO2", "CO"]
 DEFAULT_TASK = "medium"
 MAP_CACHE: Optional[Dict[str, Any]] = None
+_BASELINE_CACHE: Any = None
+
+
+def _baseline_module() -> Any:
+    global _BASELINE_CACHE
+    if _BASELINE_CACHE is not None:
+        return _BASELINE_CACHE
+
+    placeholder_env = {
+        "API_BASE_URL": "https://api.openai.com/v1",
+        "MODEL_NAME": "gpt-4.1-mini",
+        "API_KEY": "gradio-placeholder-key",
+    }
+    original_env = {key: os.environ.get(key) for key in placeholder_env}
+    try:
+        for key, value in placeholder_env.items():
+            if not os.environ.get(key):
+                os.environ[key] = value
+        try:
+            _BASELINE_CACHE = importlib.import_module("inference")
+        except ModuleNotFoundError:
+            _BASELINE_CACHE = importlib.import_module("redline_env.inference")
+        return _BASELINE_CACHE
+    finally:
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _env_root() -> str:
@@ -57,6 +85,7 @@ def _build_local_candidates(
     goal: Tuple[int, int],
     sensors: Dict[str, float],
 ) -> Dict[str, Dict[str, float]]:
+    baseline = _baseline_module()
     current_distance = math.dist(current, goal)
     candidates: Dict[str, Dict[str, float]] = {}
     for direction, (dx, dy) in baseline.ALL_DELTAS.items():
@@ -205,6 +234,7 @@ def _build_user_prompt(
     planner_note: str,
     recent_positions: List[Tuple[int, int]],
 ) -> str:
+    baseline = _baseline_module()
     goal_dx = goal[0] - current[0]
     goal_dy = goal[1] - current[1]
     candidates = _build_local_candidates(current, goal, sensors)
@@ -432,6 +462,7 @@ def _resolve_direction(
 
 
 def _request_model_direction(client: OpenAI, user_prompt: str) -> Optional[str]:
+    baseline = _baseline_module()
     completion = client.chat.completions.create(
         model=os.getenv("MODEL_NAME") or baseline.MODEL_NAME,
         messages=[
@@ -447,6 +478,7 @@ def _request_model_direction(client: OpenAI, user_prompt: str) -> Optional[str]:
 
 
 def _make_model_client() -> Tuple[Optional[OpenAI], str]:
+    baseline = _baseline_module()
     api_key = os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN")
     base_url = os.getenv("API_BASE_URL") or os.getenv("OPENAI_BASE_URL") or baseline.API_BASE_URL
     model_name = os.getenv("MODEL_NAME") or baseline.MODEL_NAME
@@ -469,6 +501,7 @@ def _run_episode(
     goal: Tuple[int, int],
     client: Optional[OpenAI],
 ) -> Dict[str, Any]:
+    baseline = _baseline_module()
     env = RedlineEnvironment()
     max_steps = int(os.getenv("REDLINE_ENV_V4_MAX_STEPS", str(baseline.DEFAULT_MAX_STEPS.get(task, 120))))
     rewards: List[float] = []
