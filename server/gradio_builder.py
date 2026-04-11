@@ -447,11 +447,11 @@ def _request_model_direction(client: OpenAI, user_prompt: str) -> Optional[str]:
 
 
 def _make_model_client() -> Tuple[Optional[OpenAI], str]:
-    api_key = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-    base_url = os.getenv("API_BASE_URL") or baseline.API_BASE_URL
+    api_key = os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN")
+    base_url = os.getenv("API_BASE_URL") or os.getenv("OPENAI_BASE_URL") or baseline.API_BASE_URL
     model_name = os.getenv("MODEL_NAME") or baseline.MODEL_NAME
     if not api_key:
-        return None, f"live model disabled: missing HF_TOKEN or API_KEY for {model_name}"
+        return None, f"live model disabled: missing API_KEY, OPENAI_API_KEY, or HF_TOKEN for {model_name}"
     return OpenAI(base_url=base_url, api_key=api_key), f"live model enabled: {model_name}"
 
 

@@ -17,13 +17,15 @@ except ModuleNotFoundError:
     from .models import RedlineAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
-HF_API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+PROXY_API_KEY = os.getenv("API_KEY")
+HF_API_KEY = os.getenv("HF_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ENV_API_BASE_URL = os.getenv("API_BASE_URL")
+ENV_API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("OPENAI_BASE_URL")
 ENV_MODEL_NAME = os.getenv("MODEL_NAME")
 
 if ENV_API_BASE_URL:
-    API_KEY = OPENAI_API_KEY or HF_API_KEY
+    # Submission validators inject API_BASE_URL/API_KEY; prefer those over any user-local creds.
+    API_KEY = PROXY_API_KEY or OPENAI_API_KEY or HF_API_KEY
     API_BASE_URL = ENV_API_BASE_URL
     MODEL_NAME = ENV_MODEL_NAME or ("Qwen/Qwen2.5-7B-Instruct-1M" if "huggingface.co" in ENV_API_BASE_URL else "gpt-4.1-mini")
 elif HF_API_KEY:
@@ -31,7 +33,7 @@ elif HF_API_KEY:
     API_BASE_URL = "https://router.huggingface.co/v1"
     MODEL_NAME = ENV_MODEL_NAME or "Qwen/Qwen2.5-7B-Instruct-1M"
 else:
-    API_KEY = OPENAI_API_KEY
+    API_KEY = OPENAI_API_KEY or PROXY_API_KEY
     API_BASE_URL = None
     MODEL_NAME = ENV_MODEL_NAME or "gpt-4.1-mini"
 
@@ -452,21 +454,25 @@ def parse_direction(text: str) -> Optional[str]:
 
 
 def request_model_direction(client: OpenAI, user_prompt: str, step: int) -> Optional[str]:
-    completion = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0.0,
-        max_tokens=300,
-        stream=False,
-    )
-    raw_response = (completion.choices[0].message.content or "").strip()
-    print(f"\n--- LLM Thinking (Step {step}) ---")
-    print(raw_response)
-    print("------------------------------")
-    return parse_direction(raw_response)
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.0,
+            max_tokens=300,
+            stream=False,
+        )
+        raw_response = (completion.choices[0].message.content or "").strip()
+        print(f"\n--- LLM Thinking (Step {step}) ---")
+        print(raw_response)
+        print("------------------------------")
+        return parse_direction(raw_response)
+    except Exception as exc:
+        print(f"[DEBUG] model request failed at step {step}: {type(exc).__name__}: {exc}", flush=True)
+        return None
 
 
 def resolve_direction(
