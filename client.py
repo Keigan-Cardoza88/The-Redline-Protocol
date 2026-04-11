@@ -4,7 +4,10 @@ from openenv.core import EnvClient
 from openenv.core.client_types import StepResult
 from openenv.core.env_server.types import State
 
-from models import RedlineAction, RedlineObservation
+try:
+    from models import RedlineAction, RedlineObservation
+except ModuleNotFoundError:
+    from .models import RedlineAction, RedlineObservation
 
 
 class RedlineEnv(

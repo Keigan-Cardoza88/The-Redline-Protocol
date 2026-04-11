@@ -9,13 +9,31 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from openai import OpenAI
-from client import RedlineEnv
-from models import RedlineAction
+try:
+    from client import RedlineEnv
+    from models import RedlineAction
+except ModuleNotFoundError:
+    from .client import RedlineEnv
+    from .models import RedlineAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
-API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "deepseek-ai/DeepSeek-V3-0324"
+HF_API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ENV_API_BASE_URL = os.getenv("API_BASE_URL")
+ENV_MODEL_NAME = os.getenv("MODEL_NAME")
+
+if ENV_API_BASE_URL:
+    API_KEY = OPENAI_API_KEY or HF_API_KEY
+    API_BASE_URL = ENV_API_BASE_URL
+    MODEL_NAME = ENV_MODEL_NAME or ("Qwen/Qwen2.5-7B-Instruct-1M" if "huggingface.co" in ENV_API_BASE_URL else "gpt-4.1-mini")
+elif HF_API_KEY:
+    API_KEY = HF_API_KEY
+    API_BASE_URL = "https://router.huggingface.co/v1"
+    MODEL_NAME = ENV_MODEL_NAME or "Qwen/Qwen2.5-7B-Instruct-1M"
+else:
+    API_KEY = OPENAI_API_KEY
+    API_BASE_URL = None
+    MODEL_NAME = ENV_MODEL_NAME or "gpt-4.1-mini"
 
 TASK_NAME = os.getenv("REDLINE_ENV_V4_TASK", "easy").lower()
 BENCHMARK = os.getenv("REDLINE_ENV_V4_BENCHMARK", "redline")
@@ -602,10 +620,8 @@ def resolve_direction(
 
 
 async def main() -> None:
-    obstacle_mask = load_planner_data()
-    client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
-    env = await RedlineEnv.from_docker_image(IMAGE_NAME)
-
+    env: Optional[RedlineEnv] = None
+    obs = None
     rewards: List[float] = []
     recent_positions: List[Tuple[int, int]] = []
     steps_taken = 0
@@ -614,12 +630,16 @@ async def main() -> None:
     best_distance = float("inf")
     no_progress_streak = 0
     medium_detour_credit = 2
+    initial_distance = 0.0
+    error_message: Optional[str] = None
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
     try:
+        obstacle_mask = load_planner_data()
+        client = OpenAI(api_key=API_KEY) if API_BASE_URL is None else OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        env = await RedlineEnv.from_docker_image(IMAGE_NAME)
         result = await env.reset()
         obs = result.observation
-        initial_distance = 0.0
 
         for step in range(1, MAX_STEPS + 1):
             await asyncio.sleep(0.5)
@@ -681,10 +701,25 @@ async def main() -> None:
                 score = 1.0
             else:
                 score = max(0.0, min(1.0, (initial_distance - final_distance) / initial_distance))
+    except Exception as exc:
+        error_message = f"{type(exc).__name__}: {exc}"
+        print(f"[DEBUG] main error: {error_message}", flush=True)
+        if obs is not None:
+            try:
+                final_distance = math.dist(obs.current_position, obs.goal_position)
+                if initial_distance == 0:
+                    score = 1.0
+                else:
+                    score = max(0.0, min(1.0, (initial_distance - final_distance) / initial_distance))
+            except Exception as score_exc:
+                print(f"[DEBUG] score recovery error: {score_exc}", flush=True)
+        if steps_taken == 0:
+            log_step(step=0, action="ERROR", reward=0.0, done=True, error=error_message)
 
     finally:
         try:
-            await env.close()
+            if env is not None:
+                await env.close()
         except Exception as exc:
             print(f"[DEBUG] env.close() error: {exc}", flush=True)
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
