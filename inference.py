@@ -17,9 +17,9 @@ except ModuleNotFoundError:
     from .models import RedlineAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
-API_BASE_URL = os.environ["API_BASE_URL"]
-MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4.1-mini"
-API_KEY = os.environ["API_KEY"]
+API_BASE_URL = os.getenv("API_BASE_URL")
+MODEL_NAME = os.getenv("MODEL_NAME")
+API_KEY = os.getenv("API_KEY")
 
 TASK_NAME = os.getenv("MY_ENV_V4_TASK", "echo")
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "my_env_v4")
@@ -623,6 +623,13 @@ async def main() -> None:
     initial_distance = 0.0
     error_message: Optional[str] = None
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+
+    if not API_BASE_URL or not API_KEY or not MODEL_NAME:
+        print("❌ ENV DEBUG:")
+        print("API_BASE_URL:", API_BASE_URL)
+        print("MODEL_NAME:", MODEL_NAME)
+        print("API_KEY exists:", bool(API_KEY))
+        raise RuntimeError("Missing required environment variables")
 
     try:
         obstacle_mask = load_planner_data()
