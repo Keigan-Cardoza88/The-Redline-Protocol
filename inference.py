@@ -18,7 +18,7 @@ except ModuleNotFoundError:
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
 API_BASE_URL = os.environ["API_BASE_URL"]
-MODEL_NAME = os.environ["MODEL_NAME"]
+MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4.1-mini"
 API_KEY = os.environ["API_KEY"]
 
 TASK_NAME = os.getenv("MY_ENV_V4_TASK", "echo")
