@@ -17,25 +17,9 @@ except ModuleNotFoundError:
     from .models import RedlineAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
-PROXY_API_KEY = os.getenv("API_KEY")
-HF_API_KEY = os.getenv("HF_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ENV_API_BASE_URL = os.getenv("API_BASE_URL") or os.getenv("OPENAI_BASE_URL")
-ENV_MODEL_NAME = os.getenv("MODEL_NAME")
-
-if ENV_API_BASE_URL:
-    # Submission validators inject API_BASE_URL/API_KEY; prefer those over any user-local creds.
-    API_KEY = PROXY_API_KEY or OPENAI_API_KEY or HF_API_KEY
-    API_BASE_URL = ENV_API_BASE_URL
-    MODEL_NAME = ENV_MODEL_NAME or ("Qwen/Qwen2.5-7B-Instruct-1M" if "huggingface.co" in ENV_API_BASE_URL else "gpt-4.1-mini")
-elif HF_API_KEY:
-    API_KEY = HF_API_KEY
-    API_BASE_URL = "https://router.huggingface.co/v1"
-    MODEL_NAME = ENV_MODEL_NAME or "Qwen/Qwen2.5-7B-Instruct-1M"
-else:
-    API_KEY = OPENAI_API_KEY or PROXY_API_KEY
-    API_BASE_URL = None
-    MODEL_NAME = ENV_MODEL_NAME or "gpt-4.1-mini"
+API_BASE_URL = os.environ["API_BASE_URL"]
+API_KEY = os.environ["API_KEY"]
+MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4.1-mini"
 
 TASK_NAME = os.getenv("REDLINE_ENV_V4_TASK", "easy").lower()
 BENCHMARK = os.getenv("REDLINE_ENV_V4_BENCHMARK", "redline")
@@ -642,7 +626,7 @@ async def main() -> None:
 
     try:
         obstacle_mask = load_planner_data()
-        client = OpenAI(api_key=API_KEY) if API_BASE_URL is None else OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        client = OpenAI(base_url=os.environ["API_BASE_URL"], api_key=os.environ["API_KEY"])
         env = await RedlineEnv.from_docker_image(IMAGE_NAME)
         result = await env.reset()
         obs = result.observation
