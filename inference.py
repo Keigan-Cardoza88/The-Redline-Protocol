@@ -4,6 +4,7 @@ import math
 import os
 import re
 import textwrap
+import time
 from itertools import count
 from typing import Dict, List, Optional, Tuple
 
@@ -29,7 +30,16 @@ DEFAULT_MAX_STEPS = {
     "medium": 150,
     "hard": 200,
 }
-MAX_STEPS = int(os.getenv("REDLINE_ENV_V4_MAX_STEPS", str(DEFAULT_MAX_STEPS.get(TASK_NAME, 120))))
+
+
+def _safe_int(value: Optional[str], default: int) -> int:
+    try:
+        return int(value) if value is not None else default
+    except Exception:
+        return default
+
+
+MAX_STEPS = _safe_int(os.getenv("REDLINE_ENV_V4_MAX_STEPS"), DEFAULT_MAX_STEPS.get(TASK_NAME, 120))
 
 CARDINAL_DELTAS: Dict[str, Tuple[int, int]] = {
     "N": (0, -1),
@@ -609,7 +619,11 @@ def resolve_direction(
     return choose_non_looping_direction(candidates, planner_choice, recent_positions), False
 
 
-async def main() -> None:
+def _run_sync(coro):
+    return asyncio.run(coro)
+
+
+def main() -> None:
     env: Optional[RedlineEnv] = None
     obs = None
     rewards: List[float] = []
@@ -622,14 +636,17 @@ async def main() -> None:
     medium_detour_credit = 2
     initial_distance = 0.0
     error_message: Optional[str] = None
-    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
+    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME or "unknown")
 
-    if not API_BASE_URL or not API_KEY or not MODEL_NAME:
+    if not API_BASE_URL or not API_KEY:
         print("❌ ENV DEBUG:")
         print("API_BASE_URL:", API_BASE_URL)
         print("MODEL_NAME:", MODEL_NAME)
         print("API_KEY exists:", bool(API_KEY))
-        raise RuntimeError("Missing required environment variables")
+        error_message = "RuntimeError: Missing required environment variables"
+        log_step(step=0, action="ERROR", reward=0.0, done=True, error=error_message)
+        log_end(success=False, steps=0, score=0.0, rewards=[])
+        return
 
     try:
         obstacle_mask = load_planner_data()
@@ -637,12 +654,12 @@ async def main() -> None:
             base_url=API_BASE_URL,
             api_key=API_KEY
         )
-        env = await RedlineEnv.from_docker_image(IMAGE_NAME)
-        result = await env.reset()
+        env = _run_sync(RedlineEnv.from_docker_image(IMAGE_NAME))
+        result = _run_sync(env.reset())
         obs = result.observation
 
         for step in range(1, MAX_STEPS + 1):
-            await asyncio.sleep(0.5)
+            time.sleep(0.5)
             if result.done:
                 break
 
@@ -666,6 +683,9 @@ async def main() -> None:
             planner_move, planner_preview, planner_note = planner_next_move(obstacle_mask, planned_path)
             user_prompt = build_user_prompt(step, current, goal, sensors, planner_move, planner_preview, planner_note, recent_positions)
             model_move = request_model_direction(client, user_prompt, step)
+            if model_move is None:
+                print("[SAFE FALLBACK] Using planner move")
+                model_move = planner_move
             final_move, detour_used = resolve_direction(
                 current,
                 goal,
@@ -679,7 +699,7 @@ async def main() -> None:
             if TASK_NAME == "medium" and detour_used:
                 medium_detour_credit = 0
 
-            result = await env.step(RedlineAction(direction=final_move))
+            result = _run_sync(env.step(RedlineAction(direction=final_move)))
             obs = result.observation
             reward = result.reward or 0.0
             done = result.done
@@ -719,11 +739,22 @@ async def main() -> None:
     finally:
         try:
             if env is not None:
-                await env.close()
+                _run_sync(env.close())
         except Exception as exc:
             print(f"[DEBUG] env.close() error: {exc}", flush=True)
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        main()
+    except BaseException as exc:
+        print(f"[DEBUG] fatal error escaped main: {type(exc).__name__}: {exc}", flush=True)
+        try:
+            log_step(step=0, action="ERROR", reward=0.0, done=True, error=f"{type(exc).__name__}: {exc}")
+        except Exception:
+            pass
+        try:
+            log_end(success=False, steps=0, score=0.0, rewards=[])
+        except Exception:
+            pass
