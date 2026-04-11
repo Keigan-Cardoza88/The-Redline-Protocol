@@ -6,7 +6,7 @@ import re
 import textwrap
 import time
 from itertools import count
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 from openai import OpenAI
@@ -19,10 +19,16 @@ except ModuleNotFoundError:
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
 API_BASE_URL = os.getenv("API_BASE_URL")
-MODEL_NAME = os.getenv("MODEL_NAME")
+MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4.1-mini"
 API_KEY = os.getenv("API_KEY")
 HF_TOKEN = os.getenv("HF_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+LIVE_ENV_BASE_URL = (
+    os.getenv("ENV_BASE_URL")
+    or os.getenv("OPENENV_BASE_URL")
+    or os.getenv("HF_SPACE_URL")
+    or os.getenv("SPACE_URL")
+)
 
 TASK_NAME = os.getenv("MY_ENV_V4_TASK", "echo")
 BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "my_env_v4")
@@ -53,6 +59,44 @@ def _resolve_client_config() -> Tuple[Optional[str], Optional[str], str, str]:
     if OPENAI_API_KEY:
         return os.getenv("OPENAI_BASE_URL"), OPENAI_API_KEY, env_model or "gpt-4.1-mini", "openai"
     return None, None, env_model or "gpt-4.1-mini", "missing"
+
+
+def _env_url_candidates() -> List[str]:
+    candidates: List[str] = []
+    for url in [
+        LIVE_ENV_BASE_URL,
+        "http://127.0.0.1:8000",
+        "http://localhost:8000",
+        "http://127.0.0.1:7680",
+        "http://localhost:7680",
+    ]:
+        if url and url not in candidates:
+            candidates.append(url)
+    return candidates
+
+
+def _connect_env() -> Tuple[RedlineEnv, Any, str]:
+    errors: List[str] = []
+    try:
+        env = _run_sync(RedlineEnv.from_docker_image(IMAGE_NAME))
+        result = _run_sync(env.reset())
+        return env, result, f"docker:{IMAGE_NAME}"
+    except Exception as exc:
+        errors.append(f"docker failed: {type(exc).__name__}: {exc}")
+
+    for url in _env_url_candidates():
+        env = RedlineEnv(base_url=url)
+        try:
+            result = _run_sync(env.reset())
+            return env, result, f"url:{url}"
+        except Exception as exc:
+            errors.append(f"{url} failed: {type(exc).__name__}: {exc}")
+            try:
+                _run_sync(env.close())
+            except Exception:
+                pass
+
+    raise RuntimeError("Unable to connect to environment. " + " | ".join(errors[:5]))
 
 CARDINAL_DELTAS: Dict[str, Tuple[int, int]] = {
     "N": (0, -1),
@@ -670,8 +714,8 @@ def main() -> None:
         print(f"[DEBUG] client source: {client_source}", flush=True)
         obstacle_mask = load_planner_data()
         client = OpenAI(api_key=client_api_key) if client_base_url is None else OpenAI(base_url=client_base_url, api_key=client_api_key)
-        env = _run_sync(RedlineEnv.from_docker_image(IMAGE_NAME))
-        result = _run_sync(env.reset())
+        env, result, env_source = _connect_env()
+        print(f"[DEBUG] env source: {env_source}", flush=True)
         obs = result.observation
 
         for step in range(1, MAX_STEPS + 1):
