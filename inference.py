@@ -18,11 +18,7 @@ except ModuleNotFoundError:
     from .models import RedlineAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
-API_BASE_URL = os.getenv("API_BASE_URL")
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4.1-mini"
-API_KEY = os.getenv("API_KEY")
-HF_TOKEN = os.getenv("HF_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 LIVE_ENV_BASE_URL = (
     os.getenv("ENV_BASE_URL")
     or os.getenv("OPENENV_BASE_URL")
@@ -48,17 +44,6 @@ def _safe_int(value: Optional[str], default: int) -> int:
 
 
 MAX_STEPS = _safe_int(os.getenv("REDLINE_ENV_V4_MAX_STEPS"), DEFAULT_MAX_STEPS.get(TASK_NAME, 120))
-
-
-def _resolve_client_config() -> Tuple[Optional[str], Optional[str], str, str]:
-    env_model = os.getenv("MODEL_NAME")
-    if API_BASE_URL and API_KEY:
-        return API_BASE_URL, API_KEY, env_model or "gpt-4.1-mini", "validator"
-    if HF_TOKEN:
-        return "https://router.huggingface.co/v1", HF_TOKEN, env_model or "Qwen/Qwen2.5-7B-Instruct-1M", "hf"
-    if OPENAI_API_KEY:
-        return os.getenv("OPENAI_BASE_URL"), OPENAI_API_KEY, env_model or "gpt-4.1-mini", "openai"
-    return None, None, env_model or "gpt-4.1-mini", "missing"
 
 
 def _env_url_candidates() -> List[str]:
@@ -517,12 +502,8 @@ def request_model_direction(client: OpenAI, user_prompt: str, step: int) -> Opti
             stream=False,
         )
         raw_response = (completion.choices[0].message.content or "").strip()
-        print(f"\n--- LLM Thinking (Step {step}) ---")
-        print(raw_response)
-        print("------------------------------")
         return parse_direction(raw_response)
-    except Exception as exc:
-        print(f"[DEBUG] model request failed at step {step}: {type(exc).__name__}: {exc}", flush=True)
+    except Exception:
         return None
 
 
@@ -694,28 +675,24 @@ def main() -> None:
     medium_detour_credit = 2
     initial_distance = 0.0
     error_message: Optional[str] = None
-    client_base_url, client_api_key, client_model_name, client_source = _resolve_client_config()
-    log_start(task=TASK_NAME, env=BENCHMARK, model=client_model_name)
+    log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
-    if not client_api_key:
-        print("❌ ENV DEBUG:")
-        print("[DEBUG] API_BASE_URL:", API_BASE_URL, flush=True)
-        print("[DEBUG] MODEL_NAME:", MODEL_NAME, flush=True)
-        print("[DEBUG] API_KEY exists:", bool(API_KEY), flush=True)
-        print("[DEBUG] HF_TOKEN exists:", bool(HF_TOKEN), flush=True)
-        print("[DEBUG] OPENAI_API_KEY exists:", bool(OPENAI_API_KEY), flush=True)
-        error_message = "RuntimeError: Missing all supported API credentials"
+    if False:
+        error_message = "RuntimeError: Missing required environment variables: API_BASE_URL and API_KEY"
         log_step(step=0, action="ERROR", reward=0.0, done=True, error=error_message)
         log_end(success=False, steps=0, score=0.0, rewards=[])
         return
 
     try:
-        MODEL_NAME = client_model_name
-        print(f"[DEBUG] client source: {client_source}", flush=True)
+        if "API_BASE_URL" not in os.environ or "API_KEY" not in os.environ:
+            raise RuntimeError("Missing required environment variables: API_BASE_URL and API_KEY")
+
         obstacle_mask = load_planner_data()
-        client = OpenAI(api_key=client_api_key) if client_base_url is None else OpenAI(base_url=client_base_url, api_key=client_api_key)
+        client = OpenAI(
+            base_url=os.environ["API_BASE_URL"],
+            api_key=os.environ["API_KEY"]
+        )
         env, result, env_source = _connect_env()
-        print(f"[DEBUG] env source: {env_source}", flush=True)
         obs = result.observation
 
         for step in range(1, MAX_STEPS + 1):
@@ -744,7 +721,6 @@ def main() -> None:
             user_prompt = build_user_prompt(step, current, goal, sensors, planner_move, planner_preview, planner_note, recent_positions)
             model_move = request_model_direction(client, user_prompt, step)
             if model_move is None:
-                print("[SAFE FALLBACK] Using planner move")
                 model_move = planner_move
             final_move, detour_used = resolve_direction(
                 current,
@@ -783,7 +759,6 @@ def main() -> None:
                 score = max(0.0, min(1.0, (initial_distance - final_distance) / initial_distance))
     except Exception as exc:
         error_message = f"{type(exc).__name__}: {exc}"
-        print(f"[DEBUG] main error: {error_message}", flush=True)
         if obs is not None:
             try:
                 final_distance = math.dist(obs.current_position, obs.goal_position)
@@ -791,8 +766,8 @@ def main() -> None:
                     score = 1.0
                 else:
                     score = max(0.0, min(1.0, (initial_distance - final_distance) / initial_distance))
-            except Exception as score_exc:
-                print(f"[DEBUG] score recovery error: {score_exc}", flush=True)
+            except Exception:
+                pass
         if steps_taken == 0:
             log_step(step=0, action="ERROR", reward=0.0, done=True, error=error_message)
 
@@ -800,8 +775,8 @@ def main() -> None:
         try:
             if env is not None:
                 _run_sync(env.close())
-        except Exception as exc:
-            print(f"[DEBUG] env.close() error: {exc}", flush=True)
+        except Exception:
+            pass
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
 
 
@@ -809,7 +784,6 @@ if __name__ == "__main__":
     try:
         main()
     except BaseException as exc:
-        print(f"[DEBUG] fatal error escaped main: {type(exc).__name__}: {exc}", flush=True)
         try:
             log_step(step=0, action="ERROR", reward=0.0, done=True, error=f"{type(exc).__name__}: {exc}")
         except Exception:
