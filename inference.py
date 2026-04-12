@@ -18,6 +18,8 @@ except ModuleNotFoundError:
     from .models import RedlineAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4.1-mini"
 LIVE_ENV_BASE_URL = (
     os.getenv("ENV_BASE_URL")
@@ -26,8 +28,8 @@ LIVE_ENV_BASE_URL = (
     or os.getenv("SPACE_URL")
 )
 
-TASK_NAME = os.getenv("MY_ENV_V4_TASK", "echo")
-BENCHMARK = os.getenv("MY_ENV_V4_BENCHMARK", "my_env_v4")
+TASK_NAME = os.getenv("REDLINE_ENV_V4_TASK", "easy").lower()
+BENCHMARK = os.getenv("REDLINE_ENV_V4_BENCHMARK", "redline")
 REGION = "Panaji"
 DEFAULT_MAX_STEPS = {
     "easy": 100,
@@ -502,9 +504,34 @@ def request_model_direction(client: OpenAI, user_prompt: str, step: int) -> Opti
             stream=False,
         )
         raw_response = (completion.choices[0].message.content or "").strip()
-        return parse_direction(raw_response)
-    except Exception:
-        return None
+        direction = parse_direction(raw_response)
+        if direction is None:
+            raise RuntimeError(f"LLM returned unparsable direction: {raw_response!r}")
+        return direction
+    except Exception as exc:
+        print(f"[DEBUG] model request failed at step {step}: {type(exc).__name__}: {exc}", flush=True)
+        raise RuntimeError(f"LLM call failed at step {step}") from exc
+
+
+def warmup_model(client: OpenAI) -> None:
+    try:
+        completion = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=[
+                {"role": "system", "content": "Reply with exactly OK."},
+                {"role": "user", "content": "OK"},
+            ],
+            temperature=0.0,
+            max_tokens=5,
+            stream=False,
+        )
+        text = (completion.choices[0].message.content or "").strip()
+        if not text:
+            raise RuntimeError("Warmup succeeded but returned empty content")
+        print(f"[DEBUG] warmup success: {text}", flush=True)
+    except Exception as exc:
+        print(f"[DEBUG] model warmup failed: {type(exc).__name__}: {exc}", flush=True)
+        raise RuntimeError(f"LLM warmup failed: {exc}") from exc
 
 
 def resolve_direction(
@@ -662,7 +689,6 @@ def _run_sync(coro):
 
 
 def main() -> None:
-    global MODEL_NAME
     env: Optional[RedlineEnv] = None
     obs = None
     rewards: List[float] = []
@@ -677,21 +703,13 @@ def main() -> None:
     error_message: Optional[str] = None
     log_start(task=TASK_NAME, env=BENCHMARK, model=MODEL_NAME)
 
-    if False:
-        error_message = "RuntimeError: Missing required environment variables: API_BASE_URL and API_KEY"
-        log_step(step=0, action="ERROR", reward=0.0, done=True, error=error_message)
-        log_end(success=False, steps=0, score=0.0, rewards=[])
-        return
-
     try:
-        if "API_BASE_URL" not in os.environ or "API_KEY" not in os.environ:
-            raise RuntimeError("Missing required environment variables: API_BASE_URL and API_KEY")
+        if not API_KEY:
+            raise RuntimeError("Missing required environment variable: API_KEY (or HF_TOKEN)")
 
         obstacle_mask = load_planner_data()
-        client = OpenAI(
-            base_url=os.environ["API_BASE_URL"],
-            api_key=os.environ["API_KEY"]
-        )
+        client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
+        warmup_model(client)
         env, result, env_source = _connect_env()
         obs = result.observation
 
@@ -720,8 +738,6 @@ def main() -> None:
             planner_move, planner_preview, planner_note = planner_next_move(obstacle_mask, planned_path)
             user_prompt = build_user_prompt(step, current, goal, sensors, planner_move, planner_preview, planner_note, recent_positions)
             model_move = request_model_direction(client, user_prompt, step)
-            if model_move is None:
-                model_move = planner_move
             final_move, detour_used = resolve_direction(
                 current,
                 goal,
