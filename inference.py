@@ -18,8 +18,8 @@ except ModuleNotFoundError:
     from .models import RedlineAction
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
-API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY") or "<Your api key like groq>"
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://api.groq.com/openai/v1"
 MODEL_NAME = os.getenv("MODEL_NAME") or "meta-llama/llama-4-scout-17b-16e-instruct"
 LIVE_ENV_BASE_URL = (
     os.getenv("ENV_BASE_URL")
@@ -62,11 +62,11 @@ def _env_url_candidates() -> List[str]:
     return candidates
 
 
-def _connect_env() -> Tuple[RedlineEnv, Any, str]:
+async def _connect_env() -> Tuple[RedlineEnv, Any, str]:
     errors: List[str] = []
     try:
-        env = _run_sync(RedlineEnv.from_docker_image(IMAGE_NAME))
-        result = _run_sync(env.reset())
+        env = await RedlineEnv.from_docker_image(IMAGE_NAME)
+        result = await env.reset()
         return env, result, f"docker:{IMAGE_NAME}"
     except Exception as exc:
         errors.append(f"docker failed: {type(exc).__name__}: {exc}")
@@ -74,12 +74,12 @@ def _connect_env() -> Tuple[RedlineEnv, Any, str]:
     for url in _env_url_candidates():
         env = RedlineEnv(base_url=url)
         try:
-            result = _run_sync(env.reset())
+            result = await env.reset()
             return env, result, f"url:{url}"
         except Exception as exc:
             errors.append(f"{url} failed: {type(exc).__name__}: {exc}")
             try:
-                _run_sync(env.close())
+                await env.close()
             except Exception:
                 pass
 
@@ -127,10 +127,10 @@ SYSTEM_PROMPT = textwrap.dedent(
     5. Only accept a dirtier move when it gives clearly better destination progress.
 
     OUTPUT FORMAT RULES:
-    - Explain your choice in at most 2 short sentences.
+    - Explain your choice IN AT MOST 2 short sentences.
     - The final line MUST be exactly one of: [N], [NE], [E], [SE], [S], [SW], [W], [NW]
     - Do not put any other bracketed text anywhere.
-    - If you are running out of space, end immediately with the final bracketed line.
+    - IF YOU ARE RUNNING OUT OF SPACE, END IMMEDIATELY WITH THE FINAL BRACKETED LINE!
     """
 ).strip()
 
@@ -477,14 +477,14 @@ def parse_direction(text: str) -> Optional[str]:
 
     lines = [line.strip() for line in raw.splitlines() if line.strip()]
     for line in reversed(lines[-5:]):
-        exact_bracket = re.fullmatch(r"\[(N|NE|E|SE|S|SW|W|NW)\]", line)
+        exact_bracket = re.fullmatch(r"\[\s*(N|NE|E|SE|S|SW|W|NW)\s*\]", line)   
         if exact_bracket:
             return exact_bracket.group(1)
         exact_token = re.fullmatch(r"(N|NE|E|SE|S|SW|W|NW)", line)
         if exact_token:
             return exact_token.group(1)
 
-    bracketed = re.findall(r"\[(N|NE|E|SE|S|SW|W|NW)\]", raw)
+    bracketed = re.findall(r"\[\s*(N|NE|E|SE|S|SW|W|NW)\s*\]", raw)
     if bracketed:
         return bracketed[-1]
 
@@ -684,11 +684,7 @@ def resolve_direction(
     return choose_non_looping_direction(candidates, planner_choice, recent_positions), False
 
 
-def _run_sync(coro):
-    return asyncio.run(coro)
-
-
-def main() -> None:
+async def main() -> None:
     env: Optional[RedlineEnv] = None
     obs = None
     rewards: List[float] = []
@@ -710,7 +706,7 @@ def main() -> None:
         obstacle_mask = load_planner_data()
         client = OpenAI(base_url=API_BASE_URL, api_key=API_KEY)
         warmup_model(client)
-        env, result, env_source = _connect_env()
+        env, result, env_source = await _connect_env()
         obs = result.observation
 
         for step in range(1, MAX_STEPS + 1):
@@ -751,7 +747,7 @@ def main() -> None:
             if TASK_NAME == "medium" and detour_used:
                 medium_detour_credit = 0
 
-            result = _run_sync(env.step(RedlineAction(direction=final_move)))
+            result = await env.step(RedlineAction(direction=final_move))
             obs = result.observation
             reward = result.reward or 0.0
             done = result.done
@@ -790,7 +786,7 @@ def main() -> None:
     finally:
         try:
             if env is not None:
-                _run_sync(env.close())
+                await env.close()
         except Exception:
             pass
         log_end(success=success, steps=steps_taken, score=score, rewards=rewards)
@@ -798,7 +794,7 @@ def main() -> None:
 
 if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main())
     except BaseException as exc:
         try:
             log_step(step=0, action="ERROR", reward=0.0, done=True, error=f"{type(exc).__name__}: {exc}")
