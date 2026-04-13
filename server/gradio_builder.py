@@ -29,8 +29,8 @@ def _baseline_module() -> Any:
         return _BASELINE_CACHE
 
     placeholder_env = {
-        "API_BASE_URL": "https://api.openai.com/v1",
-        "MODEL_NAME": "gpt-4.1-mini",
+        "API_BASE_URL": "https://api.x.ai/v1",
+        "MODEL_NAME": "grok-4-fast-non-reasoning",
         "API_KEY": "gradio-placeholder-key",
     }
     original_env = {key: os.environ.get(key) for key in placeholder_env}
@@ -479,11 +479,15 @@ def _request_model_direction(client: OpenAI, user_prompt: str) -> Optional[str]:
 
 def _make_model_client() -> Tuple[Optional[OpenAI], str]:
     baseline = _baseline_module()
-    api_key = os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN")
-    base_url = os.getenv("API_BASE_URL") or os.getenv("OPENAI_BASE_URL") or baseline.API_BASE_URL
-    model_name = os.getenv("MODEL_NAME") or baseline.MODEL_NAME
+    api_key = os.getenv("XAI_API_KEY") or os.getenv("API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN")
+    base_url = (
+        os.getenv("API_BASE_URL")
+        or os.getenv("OPENAI_BASE_URL")
+        or ("https://api.x.ai/v1" if os.getenv("XAI_API_KEY") else baseline.API_BASE_URL)
+    )
+    model_name = os.getenv("MODEL_NAME") or ("grok-4-fast-non-reasoning" if "x.ai" in base_url else baseline.MODEL_NAME)
     if not api_key:
-        return None, f"live model disabled: missing API_KEY, OPENAI_API_KEY, or HF_TOKEN for {model_name}"
+        return None, f"live model disabled: missing XAI_API_KEY, API_KEY, OPENAI_API_KEY, or HF_TOKEN for {model_name}"
     return OpenAI(base_url=base_url, api_key=api_key), f"live model enabled: {model_name}"
 
 

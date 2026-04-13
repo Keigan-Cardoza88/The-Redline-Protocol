@@ -19,8 +19,8 @@ except ModuleNotFoundError:
 
 IMAGE_NAME = os.getenv("IMAGE_NAME") or "redline_env:latest"
 API_KEY = os.getenv("HF_TOKEN") or os.getenv("API_KEY")
-API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
-MODEL_NAME = os.getenv("MODEL_NAME") or "gpt-4.1-mini"
+API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
+MODEL_NAME = os.getenv("MODEL_NAME") or "meta-llama/llama-4-scout-17b-16e-instruct"
 LIVE_ENV_BASE_URL = (
     os.getenv("ENV_BASE_URL")
     or os.getenv("OPENENV_BASE_URL")
